@@ -4,6 +4,12 @@ main.py — Doomscrolling Detector entry point
 Camera capture loop → InferenceEngine → DoomLogic → Audio trigger.
 Optional debug preview window (toggle with config.debug.show_preview).
 
+Features:
+  • Centered, resizable camera window
+  • Image overlay (bottom-right) while doomscrolling
+  • Eye gaze + head pose debug info
+  • Looping audio controlled by DoomLogic
+
 Usage:
     python main.py                    # default config.json
     python main.py --config my.json   # custom config
@@ -41,6 +47,60 @@ logger = logging.getLogger("main")
 def load_config(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+# ────────────────────────────────────────────────────────────────────
+# Load overlay image
+# ────────────────────────────────────────────────────────────────────
+def load_overlay_image(config: dict) -> np.ndarray | None:
+    """Load and resize the overlay image from config."""
+    overlay_cfg = config.get("overlay", {})
+    img_path = overlay_cfg.get("image_path", "")
+    size = overlay_cfg.get("size", 200)
+
+    if not img_path:
+        return None
+
+    try:
+        img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            logger.warning("Overlay image not found: %s", img_path)
+            return None
+
+        # Resize keeping aspect ratio, fitting within size x size
+        h, w = img.shape[:2]
+        scale = size / max(h, w)
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        logger.info("Overlay image loaded: %s (%dx%d)", img_path, new_w, new_h)
+        return img
+    except Exception as e:
+        logger.warning("Failed to load overlay image: %s — %s", img_path, e)
+        return None
+
+
+def apply_overlay(frame: np.ndarray, overlay_img: np.ndarray, margin: int = 15) -> np.ndarray:
+    """Paste overlay image in the bottom-right corner of the frame."""
+    fh, fw = frame.shape[:2]
+    oh, ow = overlay_img.shape[:2]
+
+    x = fw - ow - margin
+    y = fh - oh - margin
+
+    if x < 0 or y < 0:
+        return frame
+
+    if overlay_img.shape[2] == 4:
+        # Image with alpha channel — blend
+        alpha = overlay_img[:, :, 3:4] / 255.0
+        bgr = overlay_img[:, :, :3]
+        roi = frame[y : y + oh, x : x + ow]
+        blended = (bgr * alpha + roi * (1 - alpha)).astype(np.uint8)
+        frame[y : y + oh, x : x + ow] = blended
+    else:
+        frame[y : y + oh, x : x + ow] = overlay_img
+
+    return frame
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -91,12 +151,42 @@ def draw_debug(
         cv2.LINE_AA,
     )
 
+    # ── Eye gaze info ───────────────────────────────────────────────
+    if debug_cfg.get("show_eye_gaze", True):
+        gaze_ratio = getattr(analysis.pose, "eye_gaze_ratio", -1.0)
+        eyes_down = getattr(analysis.pose, "eyes_down", False)
+        looking_down = getattr(analysis.pose, "looking_down", False)
+
+        eye_color = (0, 0, 255) if eyes_down else (0, 255, 0)
+        gaze_text = f"Gaze: {gaze_ratio:.3f}  {'[EYES DOWN]' if eyes_down else '[OK]'}"
+        cv2.putText(
+            overlay, gaze_text, (10, 75),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, eye_color, 1, cv2.LINE_AA,
+        )
+
+        # Combined verdict
+        combined_color = (0, 0, 255) if looking_down else (0, 255, 0)
+        cv2.putText(
+            overlay,
+            f"Looking Down: {'YES' if looking_down else 'NO'}",
+            (10, 100),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            combined_color,
+            1,
+            cv2.LINE_AA,
+        )
+        phone_y = 125
+    else:
+        phone_y = 75
+
     # ── Phone detections ────────────────────────────────────────────
     if debug_cfg.get("show_phone_bbox", True):
         for det in analysis.phone.detections:
             color = (0, 255, 0) if det.in_torso_zone else (0, 100, 255)
             cv2.rectangle(overlay, (det.x1, det.y1), (det.x2, det.y2), color, 2)
-            label = f"phone {det.confidence:.0%}"
+            class_id = getattr(det, "class_id", 67)
+            label = f"cls{class_id} {det.confidence:.0%}"
             if not det.in_torso_zone:
                 label += " [OUT]"
             cv2.putText(
@@ -114,7 +204,7 @@ def draw_debug(
     cv2.putText(
         overlay,
         f"Phone: {'YES' if analysis.phone.phone_detected else 'NO'}",
-        (10, 75),
+        (10, phone_y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
         phone_color,
@@ -127,17 +217,22 @@ def draw_debug(
     progress = doom_status["progress"]
     elapsed = doom_status["elapsed"]
     threshold = doom_status["threshold"]
+    is_active = doom_status.get("is_active", False)
 
     state_colors = {
         "IDLE": (180, 180, 180),
         "TRACKING": (0, 180, 255),
-        "COOLDOWN": (255, 100, 100),
+        "TRIGGERED": (0, 0, 255),
     }
     sc = state_colors.get(state, (255, 255, 255))
 
+    state_label = state
+    if is_active:
+        state_label = "TRIGGERED 🔊"
+
     cv2.putText(
         overlay,
-        f"State: {state}",
+        f"State: {state_label}",
         (10, h - 55),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.6,
@@ -157,7 +252,7 @@ def draw_debug(
         cv2.rectangle(overlay, (bx, by), (bx + fill_w, by + bar_h), bar_color, -1)
         cv2.putText(
             overlay,
-            f"{elapsed:.1f}s / {threshold:.0f}s",
+            f"{elapsed:.1f}s / {threshold:.1f}s",
             (bx + bar_w + 10, by + 12),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.45,
@@ -166,17 +261,18 @@ def draw_debug(
             cv2.LINE_AA,
         )
 
-    if doom_status["triggered"]:
-        cv2.putText(
-            overlay,
-            "!! TIENES QUE TLABAJAL !!",
-            (w // 2 - 180, h // 2),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
-            (0, 0, 255),
-            3,
-            cv2.LINE_AA,
-        )
+    if doom_status.get("is_active", False):
+        text = "!! TRABAJA !!"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 1.8
+        thickness = 4
+        (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
+        tx = (w - tw) // 2
+        ty = h - 50
+        # Black outline for readability
+        cv2.putText(overlay, text, (tx, ty), font, scale, (0, 0, 0), thickness + 3, cv2.LINE_AA)
+        # Red text
+        cv2.putText(overlay, text, (tx, ty), font, scale, (0, 0, 255), thickness, cv2.LINE_AA)
 
     # Trigger count
     cv2.putText(
@@ -191,6 +287,24 @@ def draw_debug(
     )
 
     return overlay
+
+
+# ────────────────────────────────────────────────────────────────────
+# Center window on screen
+# ────────────────────────────────────────────────────────────────────
+def center_window(window_name: str, win_w: int, win_h: int) -> None:
+    """Move the OpenCV window to the center of the primary monitor."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        screen_w = user32.GetSystemMetrics(0)
+        screen_h = user32.GetSystemMetrics(1)
+        x = (screen_w - win_w) // 2
+        y = (screen_h - win_h) // 2
+        cv2.moveWindow(window_name, x, y)
+        logger.info("Window centered: (%d, %d) on %dx%d screen", x, y, screen_w, screen_h)
+    except Exception as e:
+        logger.debug("Could not center window: %s", e)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -214,28 +328,33 @@ def main() -> None:
     # ── Init camera ─────────────────────────────────────────────────
     cam_cfg = config.get("camera", {})
     cap = cv2.VideoCapture(cam_cfg.get("device_index", 0))
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_cfg.get("width", 640))
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_cfg.get("height", 480))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_cfg.get("width", 960))
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_cfg.get("height", 720))
     cap.set(cv2.CAP_PROP_FPS, cam_cfg.get("fps", 30))
 
     if not cap.isOpened():
         logger.error("Cannot open camera device %d", cam_cfg.get("device_index", 0))
         sys.exit(1)
 
-    logger.info(
-        "Camera opened: %dx%d @ %dfps",
-        int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        int(cap.get(cv2.CAP_PROP_FPS)),
-    )
+    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    actual_fps = int(cap.get(cv2.CAP_PROP_FPS))
+    logger.info("Camera opened: %dx%d @ %dfps", actual_w, actual_h, actual_fps)
 
     # ── Init pipeline ───────────────────────────────────────────────
     engine = InferenceEngine(config)
     doom = DoomLogic(config)
 
+    # ── Load overlay image ──────────────────────────────────────────
+    overlay_img = load_overlay_image(config)
+    overlay_margin = config.get("overlay", {}).get("margin", 15)
+
     fps_counter = 0
     fps_time = time.monotonic()
     current_fps = 0.0
+    window_centered = False
+
+    WINDOW_NAME = "Doomscrolling Detector"
 
     logger.info("═══════════════════════════════════════════════════")
     logger.info("  Doomscrolling Detector running. Press 'q' to quit.")
@@ -255,9 +374,10 @@ def main() -> None:
             # ── Inference ───────────────────────────────────────────
             analysis = engine.analyse(frame)
 
-            # ── Fusion logic ────────────────────────────────────────
+            # ── Fusion logic (use combined looking_down) ────────────
+            looking_down = getattr(analysis.pose, "looking_down", analysis.pose.head_down)
             doom_status = doom.update(
-                head_down=analysis.pose.head_down,
+                looking_down=looking_down,
                 phone_detected=analysis.phone.phone_detected,
             )
 
@@ -272,7 +392,19 @@ def main() -> None:
             # ── Debug preview ───────────────────────────────────────
             if show_preview:
                 debug_frame = draw_debug(frame, analysis, doom_status, config, current_fps)
-                cv2.imshow("Doomscrolling Detector", debug_frame)
+
+                # Overlay image in bottom-right when doomscrolling is active
+                is_active = doom_status.get("is_active", False)
+                if is_active and overlay_img is not None:
+                    debug_frame = apply_overlay(debug_frame, overlay_img, overlay_margin)
+
+                cv2.imshow(WINDOW_NAME, debug_frame)
+
+                # Center window on first frame
+                if not window_centered:
+                    center_window(WINDOW_NAME, actual_w, actual_h)
+                    window_centered = True
+
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     logger.info("User pressed 'q' — shutting down.")

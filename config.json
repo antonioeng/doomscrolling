@@ -1,33 +1,43 @@
 {
   "camera": {
     "device_index": 0,
-    "width": 640,
-    "height": 480,
+    "width": 1280,
+    "height": 720,
     "fps": 30
   },
   "pose": {
-    "pitch_threshold_deg": 25.0,
+    "pitch_threshold_deg": 15.0,
+    "eye_gaze_threshold": 0.07,
     "chin_chest_ratio_threshold": 0.18,
-    "min_detection_confidence": 0.7,
+    "min_detection_confidence": 0.6,
     "min_tracking_confidence": 0.5
   },
   "phone_detection": {
     "model_path": "yolov8n.pt",
     "onnx_model_path": "vision/yolov8n.onnx",
-    "confidence_threshold": 0.45,
-    "iou_threshold": 0.5,
+    "confidence_threshold": 0.30,
+    "iou_threshold": 0.45,
     "use_onnx": false,
-    "target_class": "cell phone",
-    "proximity_margin": 0.15
+    "target_classes": [67, 63, 62],
+    "proximity_margin": 0.10,
+    "min_aspect_ratio": 1.2,
+    "max_area_ratio": 0.30,
+    "imgsz": 320,
+    "detect_every_n_frames": 2
   },
   "doom_logic": {
-    "sustained_seconds": 7,
-    "cooldown_seconds": 60,
-    "grace_period_ms": 500
+    "sustained_seconds": 2.5,
+    "cooldown_seconds": 0,
+    "grace_period_ms": 400
   },
   "audio": {
-    "file_path": "audio/tienes_que_tlabajal.mp3",
-    "volume": 0.85
+    "file_path": "C:\\Users\\anton\\Documents\\Audacity\\trabaja.mp3",
+    "volume": 0.9
+  },
+  "overlay": {
+    "image_path": "C:\\Users\\anton\\Pictures\\trabaja.jpg",
+    "size": 200,
+    "margin": 15
   },
   "npu": {
     "enabled": false,
@@ -40,6 +50,7 @@
     "show_landmarks": true,
     "show_phone_bbox": true,
     "show_stats": true,
+    "show_eye_gaze": true,
     "log_level": "INFO"
   }
 }
