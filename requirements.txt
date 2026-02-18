@@ -1,0 +1,17 @@
+# Core
+opencv-python>=4.8
+mediapipe>=0.10.9
+ultralytics>=8.1
+numpy>=1.24
+pygame>=2.5
+
+# ONNX (optional — for NPU acceleration)
+onnxruntime>=1.17
+# onnxruntime-directml>=1.17   # Uncomment for Windows NPU/GPU via DirectML
+# onnxruntime-gpu>=1.17        # Uncomment for NVIDIA TensorRT
+
+# Audio generation (run once)
+gTTS>=2.5
+
+# Packaging (optional)
+# pyinstaller>=6.0

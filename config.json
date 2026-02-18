@@ -1,0 +1,45 @@
+{
+  "camera": {
+    "device_index": 0,
+    "width": 640,
+    "height": 480,
+    "fps": 30
+  },
+  "pose": {
+    "pitch_threshold_deg": 25.0,
+    "chin_chest_ratio_threshold": 0.18,
+    "min_detection_confidence": 0.7,
+    "min_tracking_confidence": 0.5
+  },
+  "phone_detection": {
+    "model_path": "yolov8n.pt",
+    "onnx_model_path": "vision/yolov8n.onnx",
+    "confidence_threshold": 0.45,
+    "iou_threshold": 0.5,
+    "use_onnx": false,
+    "target_class": "cell phone",
+    "proximity_margin": 0.15
+  },
+  "doom_logic": {
+    "sustained_seconds": 7,
+    "cooldown_seconds": 60,
+    "grace_period_ms": 500
+  },
+  "audio": {
+    "file_path": "audio/tienes_que_tlabajal.mp3",
+    "volume": 0.85
+  },
+  "npu": {
+    "enabled": false,
+    "execution_provider": "DmlExecutionProvider",
+    "device_id": 0,
+    "fallback_provider": "CPUExecutionProvider"
+  },
+  "debug": {
+    "show_preview": true,
+    "show_landmarks": true,
+    "show_phone_bbox": true,
+    "show_stats": true,
+    "log_level": "INFO"
+  }
+}
